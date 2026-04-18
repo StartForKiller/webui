@@ -95,22 +95,22 @@ fn addLinkerFlags(
     if (debug and enable_webui_log) {
         webui.root_module.addCMacro("WEBUI_LOG", "");
     }
-    webui.addCSourceFile(.{
+    webui.root_module.addCSourceFile(.{
         .file = b.path("src/webui.c"),
         .flags = if (enable_tls) tls_flags else no_tls_flags,
     });
 
     // Add Win32 WebView2 C++ support on Windows
     if (is_windows) {
-        webui.addCSourceFile(.{
+        webui.root_module.addCSourceFile(.{
             .file = b.path("src/webview/win32_wv2.cpp"),
             .flags = if (enable_tls) tls_flags else no_tls_flags,
         });
-        webui.linkLibCpp();
+        webui.root_module.link_libcpp = true;
     }
 
     const civetweb_debug = debug and debug_dependencies.contains(.civetweb);
-    webui.addCSourceFile(.{
+    webui.root_module.addCSourceFile(.{
         .file = b.path("src/civetweb/civetweb.c"),
         .flags = if (enable_tls and !civetweb_debug)
             civetweb_flags ++ tls_flags ++ .{"-DNDEBUG"}
@@ -121,31 +121,31 @@ fn addLinkerFlags(
         else
             civetweb_flags ++ .{"-DUSE_WEBSOCKET"} ++ no_tls_flags,
     });
-    webui.linkLibC();
-    webui.addIncludePath(b.path("include"));
+    webui.root_module.link_libc = true;
+    webui.root_module.addIncludePath(b.path("include"));
     webui.installHeader(b.path("include/webui.h"), "webui.h");
     if (is_darwin) {
-        webui.addCSourceFile(.{
+        webui.root_module.addCSourceFile(.{
             .file = b.path("src/webview/wkwebview.m"),
             .flags = &.{},
         });
-        webui.linkFramework("Cocoa");
-        webui.linkFramework("WebKit");
+        webui.root_module.linkFramework("Cocoa", .{});
+        webui.root_module.linkFramework("WebKit", .{});
     } else if (is_windows) {
-        webui.linkSystemLibrary("ws2_32");
-        webui.linkSystemLibrary("ole32");
+        webui.root_module.linkSystemLibrary("ws2_32", .{});
+        webui.root_module.linkSystemLibrary("ole32", .{});
         if (webui_target.abi == .msvc) {
-            webui.linkSystemLibrary("Advapi32");
-            webui.linkSystemLibrary("Shell32");
-            webui.linkSystemLibrary("user32");
+            webui.root_module.linkSystemLibrary("Advapi32", .{});
+            webui.root_module.linkSystemLibrary("Shell32", .{});
+            webui.root_module.linkSystemLibrary("user32", .{});
         }
         if (enable_tls) {
-            webui.linkSystemLibrary("bcrypt");
+            webui.root_module.linkSystemLibrary("bcrypt", .{});
         }
     }
     if (enable_tls) {
-        webui.linkSystemLibrary("ssl");
-        webui.linkSystemLibrary("crypto");
+        webui.root_module.linkSystemLibrary("ssl", .{});
+        webui.root_module.linkSystemLibrary("crypto", .{});
     }
 
     for (webui.root_module.link_objects.items) |lo| {
@@ -169,7 +169,8 @@ fn build_examples(b: *Build, webui: *Compile) !void {
     const optimize = webui.root_module.optimize.?;
 
     const examples_path = b.path("examples/C").getPath(b);
-    var examples_dir = std.fs.cwd().openDir(
+    var examples_dir = std.Io.Dir.cwd().openDir(
+        b.graph.io,
         examples_path,
         .{ .iterate = true },
     ) catch |e| switch (e) {
@@ -177,10 +178,10 @@ fn build_examples(b: *Build, webui: *Compile) !void {
         error.FileNotFound => return,
         else => return e,
     };
-    defer examples_dir.close();
+    defer examples_dir.close(b.graph.io);
 
     var paths = examples_dir.iterate();
-    while (try paths.next()) |val| {
+    while (try paths.next(b.graph.io)) |val| {
         if (val.kind != .directory) {
             continue;
         }
@@ -201,8 +202,8 @@ fn build_examples(b: *Build, webui: *Compile) !void {
         const path = try std.fmt.allocPrint(b.allocator, "examples/C/{s}/main.c", .{example_name});
         defer b.allocator.free(path);
 
-        exe.addCSourceFile(.{ .file = b.path(path), .flags = &.{} });
-        exe.linkLibrary(webui);
+        exe.root_module.addCSourceFile(.{ .file = b.path(path), .flags = &.{} });
+        exe.root_module.linkLibrary(webui);
 
         const exe_install = b.addInstallArtifact(exe, .{});
         const exe_run = b.addRunArtifact(exe);
